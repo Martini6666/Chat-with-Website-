@@ -1,0 +1,82 @@
+import requests
+from bs4 import BeautifulSoup
+from sentence_transformers import SentenceTransformer
+import faiss
+import openai
+
+# OpenAI API key (replace with your key)
+openai.api_key = "your-openai-api-key"
+
+# Step 1: Scrape Website Content
+def scrape_website(url):
+    """Scrape text content from a website."""
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    paragraphs = soup.find_all('p')  # Extract paragraphs
+    content = [p.get_text().strip() for p in paragraphs if p.get_text()]
+    return content
+
+# Step 2: Create Embeddings
+def generate_embeddings(texts, model):
+    """Generate embeddings for a list of texts."""
+    return model.encode(texts, convert_to_tensor=True)
+
+# Step 3: Store Embeddings in FAISS
+def store_embeddings_in_faiss(embeddings, texts):
+    """Store embeddings and texts in a FAISS index."""
+    dimension = embeddings.shape[1]
+    index = faiss.IndexFlatL2(dimension)  # L2 distance for similarity search
+    index.add(embeddings.cpu().numpy())  # Add embeddings to the index
+    return index, texts
+
+# Step 4: Query the System
+def query_system(question, model, index, texts):
+    """Find relevant chunks from the FAISS index."""
+    query_embedding = model.encode([question], convert_to_tensor=True).cpu().numpy()
+    _, indices = index.search(query_embedding, k=3)  # Retrieve top 3 matches
+    results = [texts[i] for i in indices[0]]
+    return results
+
+# Step 5: Generate a Response Using GPT
+
+def generate_response(question, context):
+    """Generate a response by combining context and the user question."""
+    prompt = f"Context: {' '.join(context)}\n\nUser Question: {question}\n\nAnswer:"
+    response = openai.Completion.create(
+        engine="text-davinci-003",
+        prompt=prompt,
+        max_tokens=150
+    )
+    return response['choices'][0]['text'].strip()
+
+# Main Function
+def main():
+    # Step 1: Scrape Content
+    url = "https://example.com"  # Replace with a website of your choice
+    print("Scraping website...")
+    scraped_content = scrape_website(url)
+
+    # Chunk the content (combine every 3 paragraphs into a chunk)
+    chunks = [" ".join(scraped_content[i:i+3]) for i in range(0, len(scraped_content), 3)]
+
+    # Step 2: Load Embedding Model
+    print("Generating embeddings...")
+    embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+    embeddings = generate_embeddings(chunks, embedding_model)
+
+    # Step 3: Store Embeddings in FAISS
+    print("Storing embeddings in FAISS...")
+    faiss_index, texts = store_embeddings_in_faiss(embeddings, chunks)
+
+    # Step 4: Query System
+    print("System ready. Ask a question:")
+    user_question = input("Your Question: ")
+    relevant_chunks = query_system(user_question, embedding_model, faiss_index, texts)
+
+    # Step 5: Generate Response
+    print("Generating response...")
+    final_answer = generate_response(user_question, relevant_chunks)
+    print(f"Answer: {final_answer}")
+
+if __name__ == "__main__":
+    main()
